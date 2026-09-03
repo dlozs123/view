@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>東方LostWord Spine 立绘查看器</title>
+  <script src="https://unpkg.com/@esotericsoftware/spine-webgl@4.1.23/dist/iife/spine-webgl.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #1e1e24;
+      color: #fff;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ---------- 左侧角色栏 ---------- */
+    #sidebar {
+      width: 240px;
+      flex-shrink: 0;
+      background: #23232e;
+      border-right: 1px solid #3d3d4d;
+      display: flex;
+      flex-direction: column;
+      transition: width .2s ease;
+      overflow: hidden;
+    }
+    body.side-hidden #sidebar { width: 0; border-right: none; }
+
+    #sidebar-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 12px; border-bottom: 1px solid #3d3d4d; flex-shrink: 0;
+    }
+    #sidebar-head .title { font-size: 14px; font-weight: 600; white-space: nowrap; }
+    #sidebar-head .count { font-size: 11px; color: #888; margin-left: 6px; }
+    #char-list {
+      list-style: none; overflow-y: auto; flex: 1; padding: 6px;
+    }
+    #char-list li { margin-bottom: 2px; }
+    #char-list .grp-head {
+      width: 100%; text-align: left; background: none; border: none; color: #ccc;
+      padding: 6px 8px; border-radius: 4px; font-size: 13px; cursor: pointer; white-space: nowrap;
+    }
+    #char-list .grp-head:hover { background: #33333f; color: #fff; }
+    #char-list .grp-head.active { background: #4a5a8a; color: #fff; }
+    #char-list .subs { padding-left: 14px; }
+    #char-list .set-btn {
+      width: 100%; text-align: left; background: none; border: none; color: #999;
+      padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; white-space: nowrap;
+    }
+    #char-list .set-btn:hover { background: #33333f; color: #fff; }
+    #char-list .set-btn.active { color: #7fb0ff; font-weight: 600; }
+    /* 滚动条 */
+    #char-list::-webkit-scrollbar { width: 8px; }
+    #char-list::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+
+    /* ---------- 主区域 ---------- */
+    #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+    #toolbar {
+      background: #2b2b36;
+      padding: 8px 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 18px;
+      align-items: center;
+      border-bottom: 1px solid #3d3d4d;
+      z-index: 10;
+      flex-shrink: 0;
+    }
+    .control-group { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+    label { color: #aaa; white-space: nowrap; }
+    select, input[type="range"] {
+      background: #3b3b4a;
+      border: 1px solid #555;
+      color: #fff;
+      padding: 3px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    select:disabled { opacity: .4; }
+    #char-toggle {
+      background: #3b3b4a; border: 1px solid #555; color: #fff;
+      padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 13px;
+    }
+    #char-toggle:hover { background: #4a4a5a; }
+    .hint { color: #777; font-size: 12px; margin-left: auto; white-space: nowrap; }
+
+    #canvas-container {
+      flex: 1;
+      position: relative;
+      background: radial-gradient(circle, #323242 0%, #17171d 100%);
+      overflow: hidden;
+    }
+    canvas {
+      width: 100%; height: 100%; display: block; cursor: grab;
+      touch-action: none;
+    }
+    canvas.dragging { cursor: grabbing; }
+    #status {
+      position: absolute;
+      left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      color: #888; font-size: 14px; text-align: center;
+      pointer-events: none; max-width: 90%;
+      line-height: 1.8;
+    }
+    #status.err { color: #ff8080; }
+    #cur-name {
+      position: absolute; left: 12px; bottom: 10px;
+      color: rgba(255,255,255,.55); font-size: 13px;
+      pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,.6);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ================= 左侧角色列表 ================= -->
+  <aside id="sidebar">
+    <div id="sidebar-head">
+      <div><span class="title">角色列表</span><span class="count" id="char-count"></span></div>
+    </div>
+    <ul id="char-list"></ul>
+  </aside>
+
+  <!-- ================= 主区域 ================= -->
+  <div id="main">
+    <div id="toolbar">
+      <div class="control-group">
+        <button id="char-toggle" title="显示/隐藏角色列表">☰ 角色</button>
+      </div>
+
+      <div class="control-group">
+        <label for="anim-select">动作:</label>
+        <select id="anim-select" disabled><option>请先加载角色</option></select>
+      </div>
+
+      <div class="control-group">
+        <label for="skin-select">皮肤:</label>
+        <select id="skin-select" disabled><option>默认</option></select>
+      </div>
+
+      <div class="control-group">
+        <label for="scale-range">缩放:</label>
+        <input type="range" id="scale-range" min="0.05" max="8" step="0.01" value="1.0" />
+        <span id="scale-val">1.00x</span>
+      </div>
+
+      <div class="control-group">
+        <label for="speed-range">速度:</label>
+        <input type="range" id="speed-range" min="0.1" max="2" step="0.1" value="1.0" />
+        <span id="speed-val">1.0x</span>
+      </div>
+
+      <span class="hint">拖拽平移 · 滚轮缩放</span>
+    </div>
+
+    <div id="canvas-container">
+      <canvas id="spine-canvas"></canvas>
+      <div id="status">正在读取角色列表 list.txt …</div>
+      <div id="cur-name"></div>
+    </div>
+  </div>
+
+  <script>
+    "use strict";
+
+    // ============================================================
+    //  配置
+    // ============================================================
+    // R2 桶分配的域名（云端资源地址）
+    const CDN_BASE = "https://spine.dlozs.top/spine/";
+    // 角色清单文件，与 index.html 放在同一目录，逐行列出文件：
+    //   文件夹名\文件名(.atlas/.png/.skel 三件套)
+    const LIST_FILE = "list.txt";
+
+    // ============================================================
+    //  全局状态
+    // ============================================================
+    let canvas, gl, renderer;
+    let skeletonData = null;
+    let skeleton = null;
+    let animationState = null;
+    let currentSpeed = 1.0;
+    let currentScale = 1.0;        // 当前显示倍率（与缩放滑块同步）
+    let groups = [];               // [{ folder, sets:[{folder, stem, urls}] }]
+    let activeSet = null;          // 当前展示的三件套
+    let loadSeq = 0;               // 加载序号：切换角色时作废仍在途的旧加载
+    let oldTextures = [];          // 用于切换角色时释放旧纹理
+    let dragging = false;
+    let lastPos = { x: 0, y: 0 };
+    let lastFrameTime = Date.now();
+
+    // ============================================================
+    //  WebGL 初始化 / 渲染循环
+    // ============================================================
+    function resizeCanvas() {
+      if (!canvas || !gl) return;
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.floor(canvas.clientWidth * dpr);
+      const h = Math.floor(canvas.clientHeight * dpr);
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+        gl.viewport(0, 0, w, h);
+        if (renderer && renderer.camera) renderer.camera.setViewport(w, h);
+      }
+    }
+
+    function initWebGL() {
+      canvas = document.getElementById("spine-canvas");
+      gl = canvas.getContext("webgl", { alpha: true });
+      if (!gl) { alert("浏览器不支持 WebGL"); return; }
+      renderer = new spine.SceneRenderer(canvas, gl);
+      resizeCanvas();
+    }
+
+    window.addEventListener("resize", resizeCanvas);
+
+    function render() {
+      requestAnimationFrame(render);
+      resizeCanvas();
+
+      const now = Date.now();
+      const delta = ((now - lastFrameTime) / 1000) * currentSpeed;
+      lastFrameTime = now;
+
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      if (skeleton && animationState && renderer) {
+        animationState.update(delta);
+        animationState.apply(skeleton);
+        skeleton.updateWorldTransform();
+
+        renderer.begin();
+        renderer.drawSkeleton(skeleton, true);
+        renderer.end();
+      }
+    }
+
+    // ============================================================
+    //  状态提示
+    // ============================================================
+    function showStatus(msg, isErr) {
+      const el = document.getElementById("status");
+      el.className = isErr ? "err" : "";
+      el.textContent = msg;
+      el.style.display = "block";
+    }
+    function hideStatus() {
+      document.getElementById("status").style.display = "none";
+    }
+
+    // ============================================================
+    //  读取 list.txt 并组织角色数据
+    // ============================================================
+    async function loadList() {
+      try {
+        const resp = await fetch(LIST_FILE, { cache: "no-store" });
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        const text = await resp.text();
+        parseList(text);
+        renderSidebar();
+        if (groups.length > 0) {
+          // 默认加载第一个角色的第一套
+          loadSet(groups[0].sets[0]);
+        } else {
+          showStatus("list.txt 中没有有效数据");
+        }
+      } catch (err) {
+        console.error(err);
+        showStatus("无法读取 " + LIST_FILE + "：<br>" + err.message +
+          "<br>请确认 list.txt 与 index.html 在同一目录，并通过 http/https 访问页面。", true);
+      }
+    }
+
+    function parseList(text) {
+      const byFolder = new Map(); // folder -> { sets: Map<stem, {urls:{}}> }
+
+      const lines = text.split(/\r?\n/);
+      for (let raw of lines) {
+        raw = raw.trim();
+        if (!raw || raw.startsWith("#") || raw.startsWith(";")) continue;
+
+        // 行格式：文件夹名\文件名
+        const idx = raw.indexOf("\\");
+        const folder = (idx >= 0 ? raw.slice(0, idx) : raw).trim();
+        const fname  = (idx >= 0 ? raw.slice(idx + 1) : "").trim();
+        if (!folder || !fname) continue;
+
+        // 按扩展名归类
+        const dot = fname.lastIndexOf(".");
+        if (dot < 0) continue;
+        const ext = fname.slice(dot + 1).toLowerCase();
+        if (ext !== "atlas" && ext !== "png" && ext !== "skel") continue;
+        const stem = fname.slice(0, dot);
+
+        let bag = byFolder.get(folder);
+        if (!bag) { bag = { folder, sets: new Map() }; byFolder.set(folder, bag); }
+
+        let rec = bag.sets.get(stem);
+        if (!rec) { rec = { folder, stem, urls: {} }; bag.sets.set(stem, rec); }
+        // 拼接云端 URL：反斜杠换成斜杠 + 逐段 URL 编码
+        rec.urls[ext] = CDN_BASE + encodeURI(folder) + "/" + encodeURI(fname);
+      }
+
+      // 按出现顺序输出分组；过滤掉三件套不完整的组
+      groups = [];
+      for (const bag of byFolder.values()) {
+        const sets = [];
+        for (const rec of bag.sets.values()) {
+          if (rec.urls.skel && rec.urls.atlas && rec.urls.png) sets.push(rec);
+          else console.warn("跳过不完整的套装:", rec.folder, rec.stem, rec.urls);
+        }
+        if (sets.length > 0) groups.push({ folder: bag.folder, sets });
+      }
+    }
+
+    // ============================================================
+    //  渲染左侧角色列表
+    // ============================================================
+    function renderSidebar() {
+      const ul = document.getElementById("char-list");
+      ul.innerHTML = "";
+      document.getElementById("char-count").textContent = groups.length + " 个角色";
+
+      for (const g of groups) {
+        const li = document.createElement("li");
+
+        const head = document.createElement("button");
+        head.className = "grp-head";
+        head.textContent = g.folder;
+        head.title = g.folder;
+        li.appendChild(head);
+
+        // 同一文件夹下若有多套模型，展示子项按钮
+        if (g.sets.length > 1) {
+          const subs = document.createElement("ul");
+          subs.className = "subs";
+          for (const s of g.sets) {
+            const sb = document.createElement("button");
+            sb.className = "set-btn";
+            sb.textContent = s.stem.replace(new RegExp("^" + g.folder + "_?"), "") || s.stem;
+            sb.title = s.stem;
+            sb.addEventListener("click", () => { loadSet(s); });
+            subs.appendChild(sb);
+          }
+          li.appendChild(subs);
+          head.addEventListener("click", () => { loadSet(g.sets[0]); });
+        } else {
+          head.addEventListener("click", () => { loadSet(g.sets[0]); });
+        }
+        ul.appendChild(li);
+      }
+    }
+
+    // 高亮侧栏当前选中项
+    function markActive(set) {
+      document.querySelectorAll("#char-list .grp-head").forEach(el => el.classList.remove("active"));
+      document.querySelectorAll("#char-list .set-btn").forEach(el => el.classList.remove("active"));
+
+      let gIdx = groups.findIndex(g => g.folder === set.folder);
+      if (gIdx < 0) return;
+      const li = document.getElementById("char-list").children[gIdx];
+      const head = li.querySelector(".grp-head");
+      if (head) head.classList.add("active");
+      if (li.querySelectorAll(".set-btn").length > 1) {
+        li.querySelectorAll(".set-btn").forEach(b => {
+          if (b.textContent === set.stem.replace(new RegExp("^" + set.folder + "_?"), "")) b.classList.add("active");
+        });
+      }
+    }
+
+    // ============================================================
+    //  从云端加载三件套 (.skel + .atlas + .png)
+    // ============================================================
+    function loadImage(url) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";  // 桶已在服务端配置 CORS
+        img.onload  = () => resolve(img);
+        img.onerror = () => reject(new Error("图片加载失败(可能文件不存在): " + url));
+        img.src = url;
+      });
+    }
+
+    async function loadSet(set) {
+      if (!renderer) return;
+      if (activeSet && activeSet.folder === set.folder && activeSet.stem === set.stem) return; // 已加载
+      const seq = ++loadSeq;       // 本次加载的序号
+      activeSet = set;
+      markActive(set);
+      showStatus("正在加载 " + set.folder + " …");
+
+      // 停用旧动画，避免切换瞬间报错
+      skeleton = null;
+      animationState = null;
+      skeletonData = null;
+
+      try {
+        // 1. 并行拉取三个文件
+        const [skelBuf, atlasText, img] = await Promise.all([
+          fetch(set.urls.skel).then(r => { if (!r.ok) throw new Error("HTTP " + r.status + " " + set.urls.skel); return r.arrayBuffer(); }),
+          fetch(set.urls.atlas).then(r => { if (!r.ok) throw new Error("HTTP " + r.status + " " + set.urls.atlas); return r.text(); }),
+          loadImage(set.urls.png)
+        ]);
+
+        // 2. 拉取期间用户已切到其它角色：丢弃这次过期结果
+        if (seq !== loadSeq) return;
+
+        // 3. 解析 Atlas 并把纹理绑定到 Page（单纹理图集）
+        const glTex = new spine.GLTexture(gl, img, false);
+        oldTextures.push(glTex);
+
+        const atlas = new spine.TextureAtlas(atlasText);
+        for (const page of atlas.pages) {
+          page.setTexture(glTex);
+        }
+
+        // 4. 解析 .skel 二进制
+        const loader = new spine.SkeletonBinary(new spine.AtlasAttachmentLoader(atlas));
+        loader.scale = 1.0;
+        skeletonData = loader.readSkeletonData(new Uint8Array(skelBuf));
+
+        // 5. 实例化骨骼
+        skeleton = new spine.Skeleton(skeletonData);
+        skeleton.setToSetupPose();
+        skeleton.updateWorldTransform();
+
+        // 6. 相机居中并自动适配
+        fitCamera();
+
+        // 7. 动画状态
+        const stateData = new spine.AnimationStateData(skeletonData);
+        animationState = new spine.AnimationState(stateData);
+
+        // 8. 填充动作/皮肤下拉
+        setupDropdowns(skeletonData);
+
+        // 9. 释放上一个角色的纹理
+        disposeOldTextures();
+
+        document.getElementById("cur-name").textContent = set.folder;
+        hideStatus();
+      } catch (err) {
+        // 过期加载的报错不提示（用户已经去点别的角色了）
+        if (seq !== loadSeq) return;
+        console.error(err);
+        showStatus("加载失败：" + err.message, true);
+        activeSet = null;
+      }
+    }
+
+    function disposeOldTextures() {
+      // 保留本次刚 push 的纹理，释放更早的
+      while (oldTextures.length > 1) {
+        const t = oldTextures.shift();
+        try { t.dispose(); } catch (e) { /* ignore */ }
+      }
+    }
+
+    // ============================================================
+    //  相机适配 / 缩放 / 拖动
+    // ============================================================
+    function fitCamera() {
+      if (!skeleton || !renderer) return;
+      const offset = new spine.Vector2();
+      const size = new spine.Vector2();
+      skeleton.getBounds(offset, size, []);
+
+      const cam = renderer.camera;
+      cam.position.x = offset.x + size.x / 2;
+      cam.position.y = offset.y + size.y / 2;
+      cam.setViewport(canvas.width, canvas.height);
+
+      const maxDim = Math.max(size.x, size.y);
+      if (maxDim > 0) {
+        const d = Math.min(canvas.width / size.x, canvas.height / size.y) * 0.65;
+        applyZoom(clamp(d, 0.05, 8), null);
+      } else {
+        applyZoom(1, null);
+      }
+    }
+
+    function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+    // 设置显示倍率 d。anchor 存在时以该屏幕点为缩放中心（滚轮），否则以画面中心缩放
+    function applyZoom(d, anchor) {
+      if (!renderer) return;
+      d = clamp(d, 0.05, 8);
+      const cam = renderer.camera;
+      const oldD = currentScale;
+
+      if (anchor && skeleton) {
+        const rect = canvas.getBoundingClientRect();
+        const mx = anchor.x - rect.left;
+        const my = anchor.y - rect.top;
+        const cw = rect.width, ch = rect.height;
+        // 鼠标处的世界坐标
+        const wx = cam.position.x + (mx - cw / 2) / oldD;
+        const wy = cam.position.y + (ch / 2 - my) / oldD;
+        // 缩放后保持该世界点仍在鼠标处
+        cam.position.x = wx - (mx - cw / 2) / d;
+        cam.position.y = wy - (ch / 2 - my) / d;
+      }
+
+      cam.zoom = 1 / d;
+      currentScale = d;
+
+      const slider = document.getElementById("scale-range");
+      slider.value = d;
+      document.getElementById("scale-val").textContent = d.toFixed(2) + "x";
+    }
+
+    // 拖动平移：把屏幕像素位移换算成世界位移（当前倍率 d 下 1px = 1/d 世界单位）
+    function startDrag(e) {
+      dragging = true;
+      lastPos = { x: e.clientX, y: e.clientY };
+      canvas.classList.add("dragging");
+      try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    }
+    function moveDrag(e) {
+      if (!dragging) return;
+      const dx = e.clientX - lastPos.x;
+      const dy = e.clientY - lastPos.y;
+      lastPos = { x: e.clientX, y: e.clientY };
+      if (!renderer || !skeleton) return;
+      const cam = renderer.camera;
+      cam.position.x -= dx / currentScale;
+      cam.position.y += dy / currentScale;
+    }
+    function endDrag() {
+      dragging = false;
+      canvas.classList.remove("dragging");
+    }
+
+    // ============================================================
+    //  下拉框逻辑
+    // ============================================================
+    function setupDropdowns(data) {
+      const animSelect = document.getElementById("anim-select");
+      const skinSelect = document.getElementById("skin-select");
+      animSelect.innerHTML = "";
+      skinSelect.innerHTML = "";
+      animSelect.disabled = false;
+
+      data.animations.forEach(anim => {
+        const opt = document.createElement("option");
+        opt.value = anim.name;
+        opt.textContent = anim.name;
+        animSelect.appendChild(opt);
+      });
+
+      const skins = data.skins.filter(s => s.name.toLowerCase() !== "default");
+      skins.forEach(skin => {
+        const opt = document.createElement("option");
+        opt.value = skin.name;
+        opt.textContent = skin.name;
+        skinSelect.appendChild(opt);
+      });
+      skinSelect.disabled = skins.length === 0;
+
+      if (data.animations.length > 0) {
+        animationState.setAnimation(0, data.animations[0].name, true);
+      } else {
+        animSelect.disabled = true;
+      }
+    }
+
+    // ============================================================
+    //  事件绑定 & 启动
+    // ============================================================
+    // 侧栏显示/隐藏
+    document.getElementById("char-toggle").addEventListener("click", () => {
+      document.body.classList.toggle("side-hidden");
+    });
+
+    // 动作 / 皮肤
+    document.getElementById("anim-select").addEventListener("change", (e) => {
+      if (animationState) animationState.setAnimation(0, e.target.value, true);
+    });
+    document.getElementById("skin-select").addEventListener("change", (e) => {
+      if (!skeleton) return;
+      skeleton.setSkinByName(e.target.value);
+      skeleton.setSlotsToSetupPose();
+    });
+
+    // 缩放滑块
+    document.getElementById("scale-range").addEventListener("input", (e) => {
+      applyZoom(parseFloat(e.target.value), null);
+    });
+
+    // 速度滑块
+    document.getElementById("speed-range").addEventListener("input", (e) => {
+      currentSpeed = parseFloat(e.target.value);
+      document.getElementById("speed-val").textContent = currentSpeed.toFixed(1) + "x";
+    });
+
+    // 拖动平移 + 滚轮缩放：canvas 需在 initWebGL() 之后才存在，故在此绑定
+    initWebGL();
+    if (canvas) {
+      canvas.addEventListener("pointerdown", (e) => { if (e.button === 0 || e.pointerType !== "mouse") startDrag(e); });
+      canvas.addEventListener("pointermove", moveDrag);
+      canvas.addEventListener("pointerup", endDrag);
+      canvas.addEventListener("pointercancel", endDrag);
+      canvas.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        if (!renderer) return;
+        const factor = Math.exp(-e.deltaY * 0.0015);
+        applyZoom(currentScale * factor, { x: e.clientX, y: e.clientY });
+      }, { passive: false });
+    }
+    requestAnimationFrame(render);
+    loadList();
+  </script>
+</body>
+</html>
